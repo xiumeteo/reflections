@@ -1,6 +1,7 @@
 package org.reflections.vfs;
 
 import com.google.common.base.Predicate;
+import com.google.common.collect.AbstractIterator;
 import com.google.common.collect.Iterables;
 import com.google.common.collect.Lists;
 import org.reflections.Reflections;
@@ -9,15 +10,17 @@ import org.reflections.util.ClasspathHelper;
 import org.reflections.util.Utils;
 
 import javax.annotation.Nullable;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UnsupportedEncodingException;
 import java.net.*;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Iterator;
-import java.util.List;
+import java.nio.file.*;
+import java.util.*;
 import java.util.jar.JarFile;
+import java.util.zip.ZipEntry;
+
+import static java.util.stream.Collectors.toList;
 
 /**
  * a simple virtual file system bridge
@@ -209,7 +212,7 @@ public abstract class Vfs {
      * <p>bundle - for bundle protocol, using eclipse FileLocator (should be provided in classpath)
      * <p>jarInputStream - creates a {@link JarInputDir} over jar files, using Java's JarInputStream
      * */
-    public static enum DefaultUrlTypes implements UrlType {
+    public enum DefaultUrlTypes implements UrlType {
         jarFile {
             public boolean matches(URL url) {
                 return url.getProtocol().equals("file") && hasJarFileInPath(url);
@@ -217,6 +220,65 @@ public abstract class Vfs {
 
             public Dir createDir(final URL url) throws Exception {
                 return new ZipDir(new JarFile(getFile(url)));
+            }
+        },
+
+        jarModularized {
+            @Override
+            public boolean matches(URL url) throws Exception {
+                return url.getProtocol().equals("jrt");
+            }
+
+            @Override
+            public Dir createDir(URL url) throws Exception {
+                final FileSystem jrtFs = FileSystems.getFileSystem(URI.create("jrt:/"));
+                final Path path = jrtFs.getPath( "modules", url.getPath());
+                return new Dir() {
+                    @Override
+                    public String getPath() {
+                        return path.toUri().getPath();
+                    }
+
+                    @Override
+                    public Iterable<File> getFiles() {
+                        try {
+                            final List<File> collect = Files.walk(path) //
+                                    .map(p -> new File() {
+                                        private final Path filePath = p;
+
+                                        @Override
+                                        public String getName() {
+                                            return filePath.getFileName().toString();
+                                        }
+
+                                        @Override
+                                        public String getRelativePath() {
+                                            return filePath.toUri().getPath();
+                                        }
+
+                                        @Override
+                                        public InputStream openInputStream() throws IOException {
+                                            return Files.newInputStream(filePath);
+                                        }
+
+                                        @Override
+                                        public String toString() {
+                                            return getName();
+                                        }
+                                    }).collect(toList());
+                            System.out.println("Logging: "+collect);
+                            return collect;
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                        return null;
+                    }
+
+                    @Override
+                    public void close() {
+
+                    }
+                };
             }
         },
 
